@@ -6,7 +6,7 @@ date: 12/08/2025
 execute:
   echo: true
 format:
-  docx:
+  html:
     reference-doc: ./References/style.docx
     toc: true
     toc-depth: 3
@@ -46,6 +46,17 @@ did not allow changing this to machine's global GDAL
 Installation steps were saved here in this
 [gist](https://gist.github.com/seamusrobertmurphy/a386ce3a022bf51c4795a402fb5c754b).
 
+Please note that `sf::sf_use_s2(use_s2 = TRUE)` is applied
+in setup chunk below, which means this workflow's
+computations are based in a spherical geometric plane, which
+is critical accuracy concern for larger areas like Bolivia
+extent. Earth engine platforms switch without explicitly
+indicating between pseudomercator (3857) and geographic
+projections (4326), which also implies but does not confirm
+different geometric ellipsoid planes are applied. Advisable
+to highlight this when discuss discrepancies with estimates
+derived in code.earth.engine.
+
 ```{r}
 #| warning: false
 #| message: false
@@ -80,7 +91,7 @@ easypackages::packages(
 
 
 options(htmltools.dir.version = F, htmltools.preserve.raw = F)
-
+devtools::install_github("ltorgo/performanceEstimation",ref="develop")
 knitr::opts_chunk$set(
   echo = TRUE, 
   message = FALSE, 
@@ -153,7 +164,7 @@ submitted
 as shown screenshot below table.
 
 | Category | Name | Description | Source/Location |
-|---------------|---------------|---------------|---------------|
+|----|----|----|----|
 |  | [ART-TREES_CHAR_v1.gdb](https://winrockintl.sharepoint.com/:f:/s/Collab/Eco/IgCtFRMHC-OcR7GnbXkuUBEzATvS8x8p5ucwz4QjfGv5J_c?e=hSEslZ) |  |  |
 |  | [/Bolivia/](https://winrockintl.sharepoint.com/:f:/s/Collab/Eco/IgDyrFrkpTkYR4VZD0Fp0FozATR4ZfY40-2gmg6VjuHaXLs?e=9siIdq) |  |  |
 | Program Document | [CHAR_TREES-Registration-Document_v2.pdf](https://drive.google.com/file/d/1UZ5yOzoruqN32X140BeFxLpW-c7JZ2RA/view?usp=drive_link) | TREES Registration Document (TRD) | Client Submission ([Received 2025-10-28](https://winrockintl.sharepoint.com/:f:/s/Collab/Eco/IgBw_APiqEiTRoRciFjq3u8-ATvoaYLFJWG2ER2xn0xKhlE?e=TQQ0Uk)) |
@@ -163,9 +174,10 @@ as shown screenshot below table.
 | Dataset | [FAO Agro-Ecological Zones](https://www.fao.org/faostat/en/#data/GI/metadata) | Tier-1 Strata (Global) | FAO-GEZ (2012); [DOI](https://www.gaez.iiasa.ac.at/docs/GAEZ_Model_Documentation.pdf); [Repo](https://www.fao.org/faostat/en/#data/GI/metadata) |
 | Dataset Documentation | MapBiomass Methodology Report |  | RAISG [(2022)](https://amazonia.mapbiomas.org/wp-content/uploads/sites/10/2023/08/ATBD_General_MapBiomas_Amazonia_4.0.pdf#page=22) |
 
-<br><br>
+<br>
 
-<center>![](Assets/PNG/ActivityData-Estimates.png)</center>
+![](Assets/PNG/ActivityData-Estimates.png){fig-align="center"
+width="80%"}
 
 ## Method
 
@@ -189,6 +201,7 @@ gdb_path   = file.path(winrock_path, "Spatial Data", "GDB", "ART-TREES_CHAR_v1.g
 
 # subds => positive integer or character to select sub-dataset (GDAL native)
 aoi_project	= sf::st_read(gdb_path, layer="Charagua")
+aoi_cropper = sf::st_transform(aoi_project, "EPSG:4326") # ee & ellipsoid ready
 crs_project = sf::st_crs(aoi_project)
 Deforestacion_bosque_intacto_2018 = terra::rast(gdb_path, subds=2) |> raster::raster()
 Deforestacion_bosque_intacto_2020 = terra::rast(gdb_path, subds=3) |> raster::raster()
@@ -309,6 +322,7 @@ levels(STACK_submissions[[1]]) = data.frame(value = c(1,2,3,4,5,6,7), ipcc_label
 aoi_country = sf::st_read(file.path(winrock_path, "Spatial Data", "AOI", "aoi_country.shp"))
 aoi_state 	= sf::st_read(file.path(winrock_path, "Spatial Data", "AOI", "aoi_state.shp"))
 aoi_project = sf::st_read(file.path(winrock_path, "Spatial Data", "AOI", "aoi_project.shp"))
+aoi_cropper = sf::st_transform(aoi_project, "EPSG:4326") 
 
 tmap::tmap_mode("plot")
 tmap::tm_shape(STACK_submissions[[1]]) + 
@@ -372,35 +386,103 @@ samples_clean = samples_raw |>
   dplyr::mutate(id = row_number()) |>
   dplyr::select(longitude, latitude, start_date, end_date, ipcc_code, ipcc_label, id)
 
-samples_sf			= sf::st_as_sf(samples_clean, crs = 4326, coords = c("longitude", "latitude"))
-samples_sf			= sf::st_intersection(samples_sf, aoi_country)	# n = 49,564 / 1,874,995
-samples					= sf::st_crop(samples_sf, st_bbox(aoi_country)) # trim artifacts
-sf::st_write(samples, file.path(local_path, "Training-Samples", "glance_training_bolivia.shp"), delete_dsn = T)
-write.csv(samples, file.path(local_path, "Training-Samples", "glance_training_bolivia.csv"), row.names = F)
+samples_sf				= sf::st_as_sf(samples_clean, crs = 4326, coords = c("longitude", "latitude"))
+samples_bolivia		= sf::st_intersection(samples_sf, aoi_country)	# n = 49,564 / 1,874,995
+samples_bolivia		= sf::st_crop(samples_sf, st_bbox(aoi_country)) # trim artifacts
+samples_charagua	= sf::st_intersection(samples_bolivia, aoi_cropper)	# n = 4,772 / 1,874,995
+samples_charagua	= sf::st_crop(samples_sf, st_bbox(aoi_cropper)) # trim artifacts
+
+sf::st_write(samples_bolivia, file.path(local_path, "Training-Samples", "glance_training_bolivia.shp"), delete_dsn = T)
+sf::st_write(samples_charagua, file.path(local_path, "Training-Samples", "glance_training_charagua.shp"), delete_dsn = T)
+write.csv(samples_bolivia, file.path(local_path, "Training-Samples", "glance_training_bolivia.csv"), row.names = F)
+write.csv(samples_charagua, file.path(local_path, "Training-Samples", "glance_training_charagua.csv"), row.names = F)
 ```
 
 ```{r}
+#| echo: false
+#| eval: false
+
 samples = sf::st_read(file.path(local_path, "Training-Samples", "glance_training_bolivia.shp"), quiet=T)
+samples_charagua = sf::st_read(file.path(local_path, "Training-Samples", "glance_training_charagua.shp"), quiet=T)
+
 samples <- samples |>
   dplyr::mutate(id = row_number()) |>
   dplyr::mutate(id = as.numeric(id)) |>
   dplyr::mutate(ipcc_label = as.factor(ipcc_label))
 dplyr::count(samples, ipcc_label) |> flextable::flextable() |> flextable::autofit()
+#dplyr::count(samples_charagua, ipcc_label) |> flextable::flextable() |> flextable::autofit()
 
-tmap::tmap_mode("view")
-tmap::tm_shape(aoi_country) + tmap::tm_borders(col = "orange") +
-  tmap::tm_shape(aoi_project) + tmap::tm_borders(col = "yellow", lwd = 2) + 
-  tmap::tm_shape(samples) + tmap::tm_dots(col = "ipcc_label") +
-  tmap::tm_text("ipcc_label",just="right",col="white",size=0.8) +
-  tmap::tm_basemap("Esri.WorldImagery")
+#tmap::tmap_mode("view")
+tmap::tm_shape(samples) + tmap::tm_symbols(fill = "ipcc_label", size=0.3, lwd=0.3) +
+	tmap::tm_shape(aoi_country) + tmap::tm_borders(col = "orange") +
+  tmap::tm_shape(aoi_project) + tmap::tm_borders(col = "purple", lwd = 2) +
+	tmap::tm_scalebar(position=c("LEFT", "BOTTOM"), text.size = .5) +
+	tmap::tm_compass(color.dark="gray60",text.color="gray60",position=c("RIGHT", "TOP")) +
+	tmap::tm_graticules(lines=T,labels.rot=c(0,90),lwd=0.2) +
+	tmap::tm_title("IPCC-Aligned GLanCE Training Samples", size=1.2)
+  #tmap::tm_text("ipcc_label",just="right",col="white",size=0.8) +
+  #tmap::tm_basemap("Esri.WorldImagery")
 ```
 
 ### Import Data Cube
 
 ```{r}
 #| eval: false
-aoi_cropper = sf::st_transform(aoi_project, "EPSG:4326") 
 
+library(rgee)
+ee_Initialize()
+
+# Define your AOI in EPSG:4326 for GEE compatibility
+aoi_ee <- sf_as_ee(aoi_cropper)  # Convert sf object to EE geometry
+
+# Import GEE assets (these replace your local file imports)
+landsat_2018 <- ee$Image('projects/murphys-deforisk/assets/LC08_001067_20180212')
+landsat_2019 <- ee$Image('projects/murphys-deforisk/assets/LC08_001067_20190114')
+
+# Clip to AOI (replaces terra::crop and mask operations)
+landsat_2018_clip <- landsat_2018$clip(aoi_ee)
+landsat_2019_clip <- landsat_2019$clip(aoi_ee)
+
+# Extract individual bands (replaces your separate band file imports)
+BLUE_2018 <- landsat_2018_clip$select('BLUE')
+GREEN_2018 <- landsat_2018_clip$select('GREEN')
+RED_2018 <- landsat_2018_clip$select('RED')
+NIR08_2018 <- landsat_2018_clip$select('NIR08')
+SWIR16_2018 <- landsat_2018_clip$select('SWIR16')
+SWIR22_2018 <- landsat_2018_clip$select('SWIR22')
+NDVI_2018 <- landsat_2018_clip$select('NDVI')
+
+BLUE_2019 <- landsat_2019_clip$select('BLUE')
+GREEN_2019 <- landsat_2019_clip$select('GREEN')
+RED_2019 <- landsat_2019_clip$select('RED')
+NIR08_2019 <- landsat_2019_clip$select('NIR08')
+SWIR16_2019 <- landsat_2019_clip$select('SWIR16')
+SWIR22_2019 <- landsat_2019_clip$select('SWIR22')
+NDVI_2019 <- landsat_2019_clip$select('NDVI')
+
+
+# capture from cloud for local processing:
+ee_as_rast(image = BLUE_2018, region = aoi_ee, scale = 30, via = "gcs") ->		BLUE_2018
+ee_as_rast(image = GREEN_2018, region = aoi_ee, scale = 30, via = "gcs") -> 	GREEN_2018
+ee_as_rast(image = RED_2018, region = aoi_ee, scale = 30, via = "gcs") -> 		RED_2018
+ee_as_rast(image = NIR08_2018, region = aoi_ee, scale = 30, via = "gcs") -> 	NIR08_2018
+ee_as_rast(image = SWIR16_2018, region = aoi_ee, scale = 30, via = "gcs") ->	SWIR16_2018
+ee_as_rast(image = SWIR22_2018, region = aoi_ee, scale = 30, via = "gcs") ->	SWIR22_2018
+ee_as_rast(image = NDVI_2018, region = aoi_ee, scale = 30, via = "gcs") ->		NDVI_2018
+
+ee_as_rast(image = BLUE_2019, region = aoi_ee, scale = 30, via = "gcs") ->		BLUE_2019
+ee_as_rast(image = GREEN_2019, region = aoi_ee, scale = 30, via = "gcs") -> 	GREEN_2019
+ee_as_rast(image = RED_2019, region = aoi_ee, scale = 30, via = "gcs") -> 		RED_2019
+ee_as_rast(image = NIR08_2019, region = aoi_ee, scale = 30, via = "gcs") -> 	NIR08_2019
+ee_as_rast(image = SWIR16_2019, region = aoi_ee, scale = 30, via = "gcs") ->	SWIR16_2019
+ee_as_rast(image = SWIR22_2019, region = aoi_ee, scale = 30, via = "gcs") ->	SWIR22_2019
+ee_as_rast(image = NDVI_2019, region = aoi_ee, scale = 30, via = "gcs") ->		NDVI_2019
+```
+
+```{r}
+#| eval: false
+#| echo: false
+aoi_cropper = sf::st_transform(aoi_project, "EPSG:4326") 
 BLUE_2018_NW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_BLUE_2018-02-12-NW.tif")) |> terra::crop(aoi_cropper, mask=T) |> terra::trim()
 BLUE_2018_NE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_BLUE_2018-02-12-NE.tif")) |> terra::crop(aoi_cropper, mask=T) |> terra::trim()
 BLUE_2018_SE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_BLUE_2018-02-12-SE.tif")) |> terra::crop(aoi_cropper, mask=T) |> terra::trim()
@@ -446,7 +528,7 @@ NIR08_2019 = terra::mosaic(NIR08_2019_NW, NIR08_2019_NE, NIR08_2019_SE, NIR08_20
 names(NIR08_2018) = "NIR08_2018"
 names(NIR08_2019) = "NIR08_2019"
 terra::writeRaster(NIR08_2018, file.path(local_path, "Bolivia-2018", "NIR08_2018.tif"), overwrite=T)
-terra::writeRaster(GREEN_2019, file.path(local_path, "Bolivia-2019", "GREEN_2019.tif"), overwrite=T)
+terra::writeRaster(NIR08_2019, file.path(local_path, "Bolivia-2019", "NIR08_2019.tif"), overwrite=T)
 
 
 RED_2018_NW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_RED_2018-02-12-NW.tif")) |> terra::crop(aoi_cropper, mask=T) |> terra::trim()
@@ -461,7 +543,7 @@ RED_2018 = terra::mosaic(RED_2018_NW, RED_2018_NE, RED_2018_SE, RED_2018_SW)
 RED_2019 = terra::mosaic(RED_2019_NW, RED_2019_NE, RED_2019_SE, RED_2019_SW)
 names(RED_2018) = "RED_2018"
 names(RED_2019) = "RED_2019"
-terra::writeRaster(RED_2019, file.path(local_path, "Bolivia-2018", "RED_2018.tif"), overwrite=T)
+terra::writeRaster(RED_2018, file.path(local_path, "Bolivia-2018", "RED_2018.tif"), overwrite=T)
 terra::writeRaster(RED_2019, file.path(local_path, "Bolivia-2019", "RED_2019.tif"), overwrite=T)
 
 
@@ -517,6 +599,124 @@ terra::writeRaster(NDVI_2019, file.path(local_path, "Bolivia-2019", "NDVI_2019.t
 ```{r}
 #| eval: false
 #| echo: false
+aoi_cropper = sf::st_transform(aoi_project, "EPSG:4326") 
+BLUE_2018_NW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_BLUE_2018-02-12-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+BLUE_2018_NE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_BLUE_2018-02-12-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+BLUE_2018_SE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_BLUE_2018-02-12-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+BLUE_2018_SW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_BLUE_2018-02-12-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+BLUE_2019_NW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_BLUE_2019-01-14-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+BLUE_2019_NE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_BLUE_2019-01-14-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+BLUE_2019_SE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_BLUE_2019-01-14-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+BLUE_2019_SW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_BLUE_2019-01-14-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+BLUE_2018 = terra::mosaic(BLUE_2018_NW, BLUE_2018_NE, BLUE_2018_SE, BLUE_2018_SW)
+BLUE_2019 = terra::mosaic(BLUE_2019_NW, BLUE_2019_NE, BLUE_2019_SE, BLUE_2019_SW)
+names(BLUE_2018) = "BLUE_2018"
+names(BLUE_2019) = "BLUE_2019"
+terra::writeRaster(BLUE_2018, file.path(local_path, "Bolivia-2018", "BLUE_2018_BOL.tif"), overwrite=T)
+terra::writeRaster(BLUE_2019, file.path(local_path, "Bolivia-2019", "BLUE_2019_BOL.tif"), overwrite=T)
+
+
+GREEN_2018_NW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_GREEN_2018-02-12-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+GREEN_2018_NE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_GREEN_2018-02-12-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+GREEN_2018_SE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_GREEN_2018-02-12-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+GREEN_2018_SW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_GREEN_2018-02-12-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+GREEN_2019_NW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_GREEN_2019-01-14-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+GREEN_2019_NE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_GREEN_2019-01-14-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+GREEN_2019_SE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_GREEN_2019-01-14-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+GREEN_2019_SW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_GREEN_2019-01-14-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+GREEN_2018 = terra::mosaic(GREEN_2018_NW, GREEN_2018_NE, GREEN_2018_SE, GREEN_2018_SW)
+GREEN_2019 = terra::mosaic(GREEN_2019_NW, GREEN_2019_NE, GREEN_2019_SE, GREEN_2019_SW)
+names(GREEN_2018) = "GREEN_2018"
+names(GREEN_2019) = "GREEN_2019"
+terra::writeRaster(GREEN_2018, file.path(local_path, "Bolivia-2018", "GREEN_2018_BOL.tif"), overwrite=T)
+terra::writeRaster(GREEN_2019, file.path(local_path, "Bolivia-2019", "GREEN_2019_BOL.tif"), overwrite=T)
+
+
+NIR08_2018_NW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_NIR08_2018-02-12-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+NIR08_2018_NE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_NIR08_2018-02-12-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+NIR08_2018_SE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_NIR08_2018-02-12-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+NIR08_2018_SW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_NIR08_2018-02-12-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+NIR08_2019_NW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_NIR08_2019-01-14-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+NIR08_2019_NE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_NIR08_2019-01-14-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+NIR08_2019_SE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_NIR08_2019-01-14-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+NIR08_2019_SW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_NIR08_2019-01-14-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+NIR08_2018 = terra::mosaic(NIR08_2018_NW, NIR08_2018_NE, NIR08_2018_SE, NIR08_2018_SW)
+NIR08_2019 = terra::mosaic(NIR08_2019_NW, NIR08_2019_NE, NIR08_2019_SE, NIR08_2019_SW)
+names(NIR08_2018) = "NIR08_2018"
+names(NIR08_2019) = "NIR08_2019"
+terra::writeRaster(NIR08_2018, file.path(local_path, "Bolivia-2018", "NIR08_2018_BOL.tif"), overwrite=T)
+terra::writeRaster(NIR08_2019, file.path(local_path, "Bolivia-2019", "NIR08_2019_BOL.tif"), overwrite=T)
+
+
+RED_2018_NW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_RED_2018-02-12-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+RED_2018_NE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_RED_2018-02-12-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+RED_2018_SE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_RED_2018-02-12-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+RED_2018_SW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_RED_2018-02-12-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+RED_2019_NW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_RED_2019-01-14-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+RED_2019_NE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_RED_2019-01-14-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+RED_2019_SE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_RED_2019-01-14-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+RED_2019_SW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_RED_2019-01-14-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+RED_2018 = terra::mosaic(RED_2018_NW, RED_2018_NE, RED_2018_SE, RED_2018_SW)
+RED_2019 = terra::mosaic(RED_2019_NW, RED_2019_NE, RED_2019_SE, RED_2019_SW)
+names(RED_2018) = "RED_2018"
+names(RED_2019) = "RED_2019"
+terra::writeRaster(RED_2018, file.path(local_path, "Bolivia-2018", "RED_2018_BOL.tif"), overwrite=T)
+terra::writeRaster(RED_2019, file.path(local_path, "Bolivia-2019", "RED_2019_BOL.tif"), overwrite=T)
+
+
+SWIR16_2018_NW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_SWIR16_2018-02-12-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR16_2018_NE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_SWIR16_2018-02-12-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR16_2018_SE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_SWIR16_2018-02-12-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR16_2018_SW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_SWIR16_2018-02-12-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR16_2019_NW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_SWIR16_2019-01-14-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR16_2019_NE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_SWIR16_2019-01-14-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR16_2019_SE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_SWIR16_2019-01-14-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR16_2019_SW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_SWIR16_2019-01-14-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR16_2018 = terra::mosaic(SWIR16_2018_NW, SWIR16_2018_NE, SWIR16_2018_SE, SWIR16_2018_SW)
+SWIR16_2019 = terra::mosaic(SWIR16_2019_NW, SWIR16_2019_NE, SWIR16_2019_SE, SWIR16_2019_SW)
+names(SWIR16_2018) = "SWIR16_2018"
+names(SWIR16_2019) = "SWIR16_2019"
+terra::writeRaster(SWIR16_2018, file.path(local_path, "Bolivia-2018", "SWIR16_2018_BOL.tif"), overwrite=T)
+terra::writeRaster(SWIR16_2019, file.path(local_path, "Bolivia-2019", "SWIR16_2019_BOL.tif"), overwrite=T)
+
+
+SWIR22_2018_NW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_SWIR22_2018-02-12-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR22_2018_NE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_SWIR22_2018-02-12-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR22_2018_SE = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_SWIR22_2018-02-12-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR22_2018_SW = terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_SWIR22_2018-02-12-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR22_2019_NW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_SWIR22_2019-01-14-NW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR22_2019_NE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_SWIR22_2019-01-14-NE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR22_2019_SE = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_SWIR22_2019-01-14-SE.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR22_2019_SW = terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_SWIR22_2019-01-14-SW.tif")) |> terra::crop(aoi_country, mask=T) |> terra::trim()
+SWIR22_2018 = terra::mosaic(SWIR22_2018_NW, SWIR22_2018_NE, SWIR22_2018_SE, SWIR22_2018_SW)
+SWIR22_2019 = terra::mosaic(SWIR22_2019_NW, SWIR22_2019_NE, SWIR22_2019_SE, SWIR22_2019_SW)
+names(SWIR22_2018) = "SWIR22_2018"
+names(SWIR22_2019) = "SWIR22_2019"
+terra::writeRaster(SWIR22_2018, file.path(local_path, "Bolivia-2018", "SWIR22_2018_BOL.tif"), overwrite=T)
+terra::writeRaster(SWIR22_2019, file.path(local_path, "Bolivia-2019", "SWIR22_2019_BOL.tif"), overwrite=T)
+
+
+NDVI_2018=terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_NDVI_2018-02-12-NW.tif"))
+NDVI_2018=terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_NDVI_2018-02-12-NE.tif"))
+NDVI_2018=terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_NDVI_2018-02-12-SE.tif"))
+NDVI_2018=terra::rast(file.path(local_path, "Bolivia-2018", "LC08_001067_NDVI_2018-02-12-SW.tif"))
+NDVI_2019=terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_NDVI_2019-01-14-NW.tif"))
+NDVI_2019=terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_NDVI_2019-01-14-NE.tif"))
+NDVI_2019=terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_NDVI_2019-01-14-SE.tif"))
+NDVI_2019=terra::rast(file.path(local_path, "Bolivia-2019", "LC08_001067_NDVI_2019-01-14-SW.tif"))
+NDVI_2018 = terra::mosaic(NDVI_2018_NW, NDVI_2018_NE, NDVI_2018_SE, NDVI_2018_SW)
+NDVI_2019 = terra::mosaic(NDVI_2019_NW, NDVI_2019_NE, NDVI_2019_SE, NDVI_2019_SW)
+names(NDVI_2018) = "NDVI_2018"
+names(NDVI_2019) = "NDVI_2019"
+terra::writeRaster(NDVI_2018, file.path(local_path, "Bolivia-2018", "NDVI_2018_BOL.tif"), overwrite=T)
+terra::writeRaster(NDVI_2019, file.path(local_path, "Bolivia-2019", "NDVI_2019_BOL.tif"), overwrite=T)
+```
+
+### Stack Data Cube
+
+```{r}
+#| eval: false
+#| echo: true
 
 BLUE_2018		= terra::rast(file.path(local_path, "Bolivia-2018", "BLUE_2018.tif"))
 BLUE_2019		= terra::rast(file.path(local_path, "Bolivia-2019", "BLUE_2019.tif"))
@@ -524,8 +724,8 @@ GREEN_2018	= terra::rast(file.path(local_path, "Bolivia-2018", "GREEN_2018.tif")
 GREEN_2019	= terra::rast(file.path(local_path, "Bolivia-2019", "GREEN_2019.tif"))
 NIR08_2018	= terra::rast(file.path(local_path, "Bolivia-2018", "NIR08_2018.tif"))
 NIR08_2019	= terra::rast(file.path(local_path, "Bolivia-2019", "NIR08_2019.tif"))
-RED_2018		= terra::rast(file.path(local_path, "Bolivia-2018", "RED_2020.tif"))
-RED_2019		= terra::rast(file.path(local_path, "Bolivia-2019", "RED_2020.tif"))
+RED_2018		= terra::rast(file.path(local_path, "Bolivia-2018", "RED_2018.tif"))
+RED_2019		= terra::rast(file.path(local_path, "Bolivia-2019", "RED_2019.tif"))
 SWIR16_2018 = terra::rast(file.path(local_path, "Bolivia-2018", "SWIR16_2018.tif"))
 SWIR16_2019 = terra::rast(file.path(local_path, "Bolivia-2019", "SWIR16_2019.tif"))
 SWIR22_2018 = terra::rast(file.path(local_path, "Bolivia-2018", "SWIR22_2018.tif"))
@@ -542,15 +742,23 @@ BLUE_2019 = terra::resample(BLUE_2019, DEM) |> raster::raster()
 GREEN_2018 = terra::resample(GREEN_2018, DEM) |> raster::raster() 
 GREEN_2019 = terra::resample(GREEN_2019, DEM) |> raster::raster() 
 RED_2018 = terra::resample(RED_2018, DEM) |> raster::raster() 
-RED_2019 = terra::resample(RED_2019, DEM) |> raster::raster() s
+RED_2019 = terra::resample(RED_2019, DEM) |> raster::raster()
 SWIR16_2018 = terra::resample(SWIR16_2018, DEM) |> raster::raster() 
 SWIR16_2019 = terra::resample(SWIR16_2019, DEM) |> raster::raster() 
 SWIR22_2018 = terra::resample(SWIR22_2018, DEM) |> raster::raster() 
 SWIR22_2019 = terra::resample(SWIR22_2019, DEM) |> raster::raster() 
 NDVI_2018 = terra::resample(NDVI_2018, DEM) |> raster::raster() 
 NDVI_2019 = terra::resample(NDVI_2019, DEM) |> raster::raster() 
+
+
 STACK_2018 = raster::brick(BLUE_2018, GREEN_2018, RED_2018, NIR08_2018, SWIR16_2018, SWIR22_2018, NDVI_2018, DEM)
 STACK_2019 = raster::brick(BLUE_2019, GREEN_2019, RED_2019, NIR08_2019, SWIR16_2019, SWIR22_2019, NDVI_2019, DEM)
+
+raster::writeRaster(STACK_2018, format = "GTiff", overwrite = T, 
+	file.path(local_path, "STACK", "STACK_2018.tif"))
+raster::writeRaster(STACK_2019, format = "GTiff", overwrite = T, 
+	file.path(local_path, "STACK", "STACK_2019.tif"))
+
 
 ```
 
@@ -680,10 +888,6 @@ STACK_2023 = raster::brick(BLUE_2023, GREEN_2023, RED_2023, NIR08_2023, SWIR16_2
 ```{r}
 #| echo: false
 #| eval: false
-raster::writeRaster(STACK_2018, format = "GTiff", overwrite = T, 
-	file.path(local_path, "STACK", "STACK_2018.tif"))
-raster::writeRaster(STACK_2019, format = "GTiff", overwrite = T, 
-	file.path(local_path, "STACK", "STACK_2019.tif"))
 raster::writeRaster(STACK_2020, format = "GTiff", overwrite = T, 
 	file.path(local_path, "STACK", "STACK_2020.tif"))
 raster::writeRaster(STACK_2021, format = "GTiff", overwrite = T, 
@@ -692,20 +896,21 @@ raster::writeRaster(STACK_2022, format = "GTiff", overwrite = T,
 	file.path(local_path, "STACK", "STACK_2022.tif"))
 raster::writeRaster(STACK_2023, format = "GTiff", overwrite = T, 
 	file.path(local_path, "STACK", "STACK_2023.tif"))
-```
 
-```{r}
-#| echo: false
-samples = sf::st_read(file.path(local_path, "Training-Samples", "glance_training_bolivia.shp"))
-STACK_2018 = raster::brick(file.path(local_path, "STACK", "STACK_2018.tif"))
-STACK_2019 = raster::brick(file.path(local_path, "STACK", "STACK_2019.tif"))
 STACK_2020 = raster::brick(file.path(local_path, "STACK", "STACK_2020.tif"))
 STACK_2021 = raster::brick(file.path(local_path, "STACK", "STACK_2021.tif"))
 STACK_2022 = raster::brick(file.path(local_path, "STACK", "STACK_2022.tif"))
 STACK_2023 = raster::brick(file.path(local_path, "STACK", "STACK_2023.tif"))
 ```
 
-### Image classification
+```{r}
+#| echo: false
+samples = sf::st_read(file.path(local_path, "Training-Samples", "glance_training_charagua.shp"), quiet=T)
+STACK_2018 = raster::brick(file.path(local_path, "STACK", "STACK_2018.tif"))
+STACK_2019 = raster::brick(file.path(local_path, "STACK", "STACK_2019.tif"))
+```
+
+### Image Classification
 
 We trained a Random Forest model fitted with 500 decision
 trees. The dataset was partitioned using a 70:30 ratio which
@@ -717,10 +922,18 @@ performances of recursive modeling, which informed final
 model selection.
 
 ```{r}
+#| eval: false
+
+
 # extract signatures
 signatures_2018 = raster::extract(STACK_2018, samples, df=T) # watch for data formats
+signatures_2019 = raster::extract(STACK_2019, samples, df=T) # watch for data formats
+
 samples_signatures_2018 = dplyr::inner_join(signatures_2018, samples, by=c("ID"="id"))
+samples_signatures_2019 = dplyr::inner_join(signatures_2019, samples, by=c("ID"="id"))
+
 samples_signatures_2018$geometry <- NULL # set geometry to NULL for model training
+samples_signatures_2019$geometry <- NULL # set geometry to NULL for model training
 
 # Stratify-function to ensure class proportions are maintained in both train and test
 stratified_partition <- function(data, group_col, train_ratio = 0.7) {
@@ -735,26 +948,36 @@ stratified_partition <- function(data, group_col, train_ratio = 0.7) {
   }
 
 partitioned_data_2018 <- stratified_partition(samples_signatures_2018, group_col="ipcc_label", train_ratio=0.7)
+partitioned_data_2019 <- stratified_partition(samples_signatures_2019, group_col="ipcc_label", train_ratio=0.7)
+
 trainData_2018 = partitioned_data_2018$train
+trainData_2019 = partitioned_data_2019$train
 testData_2018  = partitioned_data_2018$test
+testData_2019  = partitioned_data_2019$test
 #table(trainData_2018$ipcc_label)
 #table(testData_2018$ipcc_label)
 
 # synthetic minotrity oversampling technique
-trainData_2018<-performanceEstimation::smote(ipcc_label ~ .,data=trainData_2018,perc.over=30,perc.under=30)
-testData_2018<-performanceEstimation::smote(ipcc_label ~ .,data=testData_2018,perc.over=30,perc.under=30)
+trainData_2018 = performanceEstimation::smote(ipcc_label ~ .,data=trainData_2018,perc.over=30,perc.under=30)
+trainData_2019 = performanceEstimation::smote(ipcc_label ~ .,data=trainData_2019,perc.over=30,perc.under=30)
+testData_2018 = performanceEstimation::smote(ipcc_label ~ .,data=testData_2018,perc.over=30,perc.under=30)
+testData_2019 = performanceEstimation::smote(ipcc_label ~ .,data=testData_2019,perc.over=30,perc.under=30)
+
 # interpolate missing cloud pixels with class-median-normalization
 trainData_2018 <- trainData_2018 |> group_by(ipcc_label) |> mutate(across(where(is.numeric),
     ~ ifelse(is.na(.), median(., na.rm = T), .))) |> ungroup()
+trainData_2019 <- trainData_2019 |> group_by(ipcc_label) |> mutate(across(where(is.numeric),
+    ~ ifelse(is.na(.), median(., na.rm = T), .))) |> ungroup()
+
 testData_2018 <- testData_2018 |> group_by(ipcc_label) |> mutate(across(where(is.numeric),
+    ~ ifelse(is.na(.), median(., na.rm = T), .))) |> ungroup()
+testData_2019 <- testData_2019 |> group_by(ipcc_label) |> mutate(across(where(is.numeric),
     ~ ifelse(is.na(.), median(., na.rm = T), .))) |> ungroup()
 
 # assign model variables
 response  <- c("label")
-predictors_2018 <- c(
-	"BLUE_2018", "GREEN_2018", "RED_2018", 
-	"NIR08_2018", "SWIR16_2018", "SWIR22_2018", 
-	"NDVI_2018", "DEM")
+predictors_2018 <- c("BLUE_2018", "GREEN_2018", "RED_2018", "NIR08_2018", "SWIR16_2018", "SWIR22_2018", "NDVI_2018", "DEM")
+predictors_2019 <- c("BLUE_2019", "GREEN_2019", "RED_2019", "NIR08_2019", "SWIR16_2019", "SWIR22_2019", "NDVI_2019", "DEM")
 
 # set training parameters
 cv_regime <- caret::trainControl(
@@ -768,6 +991,17 @@ cv_regime <- caret::trainControl(
 rf_model_2018 <- caret::train(
   ipcc_label~.,
   data = trainData_2018[, c(predictors_2018, "ipcc_label")], # drop ID var
+  trControl = cv_regime,
+  method    = "rf", 
+  metric    = 'Kappa', 
+  ntree     = 500,
+  tuneLength= 6,
+  importance= T
+  )
+
+rf_model_2019 <- caret::train(
+  ipcc_label~.,
+  data = trainData_2019[, c(predictors_2019, "ipcc_label")], # drop ID var
   trControl = cv_regime,
   method    = "rf", 
   metric    = 'Kappa', 
@@ -789,7 +1023,6 @@ Sensitivity (XX%) and Specificity (XX%).
 
 ```{r}
 #| eval: false
-
 rf_test_2018 <- predict(rf_model_2018, testData_2018)
 print(rf_model_2018) # cv results
 caret::confusionMatrix(rf_test_2018,testData_2018$label) # blind test results
@@ -800,8 +1033,14 @@ caret::confusionMatrix(rf_test_2018,testData_2018$label) # blind test results
 ### Land Change Estimates
 
 ```{r}
+#| eval: false
+
 LULC_2018 = terra::rast(local_path, "Classified", "LULC_2018.tif") |> 
   terra::project(crs_project) |> terra::crop(aoi_project, mask=T) |> terra::trim()
+
+LULC_2019 = terra::rast(local_path, "Classified", "LULC_2019.tif") |> 
+  terra::project(crs_project) |> terra::crop(aoi_project, mask=T) |> terra::trim()
+
 
 code_dict <- data.frame(id = c(1, 2, 3, 4, 5, 6),
   ipcc_label = c("Forest Land", "Cropland", "Grasslands", "Wetlands", "Settlements", "Other Lands"))
@@ -839,8 +1078,7 @@ compute_land_cover_summary <- function(aoi_project, rasters, pixel_area) {
 # Organize rasters into a named list
 rasters <- list(
   "2018" = LULC_2018,
-  "2019" = LULC_2019,
-  "2020" = LULC_2020
+  "2019" = LULC_2019
 )
 
 # Compute land cover summary
@@ -857,6 +1095,7 @@ land_cover_summary
 # Document the computational environment
 devtools::session_info()
 sf::st_drivers()
+sf::sf_extSoftVersion()
 
 # Autosave records in runtime log folder
 writeLines(capture.output(devtools::session_info()), 
